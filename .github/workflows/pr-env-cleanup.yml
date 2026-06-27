@@ -45,8 +45,20 @@ jobs:
             --query "Tags[?Key=='NeonBranchId'].Value | [0]" \
             --output text)
 
+          # Wait for any in-progress operation to finish before deleting
+          echo "Waiting for service to reach a stable state …"
+          for i in $(seq 1 20); do
+            STATUS=$(aws apprunner describe-service --service-arn "$SERVICE_ARN" \
+              --query Service.Status --output text 2>/dev/null || echo "GONE")
+            case "$STATUS" in
+              RUNNING|CREATE_FAILED|DELETE_FAILED|GONE) break ;;
+            esac
+            echo "  Status: $STATUS ($i/20) …"; sleep 15
+          done
+
           echo "Deleting App Runner service ${SERVICE_NAME} …"
-          aws apprunner delete-service --service-arn "$SERVICE_ARN"
+          aws apprunner delete-service --service-arn "$SERVICE_ARN" || \
+            echo "  Delete call failed (may already be deleting) — continuing"
 
           if [ -n "$NEON_BRANCH_ID" ] && [ "$NEON_BRANCH_ID" != "None" ]; then
             echo "Deleting Neon branch ${NEON_BRANCH_ID} …"
