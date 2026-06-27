@@ -54,7 +54,8 @@ jobs:
               continue
             fi
 
-            PUSH_TS=$(date -d "$LAST_PUSH" +%s 2>/dev/null || echo 0)
+            # Tag stores a Unix epoch directly — no date parsing needed.
+            PUSH_TS="$LAST_PUSH"
             AGE=$((NOW - PUSH_TS))
 
             if [ "$AGE" -gt "$TTL" ]; then

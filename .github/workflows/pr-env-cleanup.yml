@@ -10,6 +10,8 @@ permissions:
 
 jobs:
   cleanup:
+    # Only owner PRs ever get a preview env — skip cleanup for everyone else.
+    if: github.event.pull_request.user.login == 'KhaledElbalal'
     runs-on: ubuntu-latest
 
     steps:
