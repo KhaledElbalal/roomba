@@ -61,6 +61,16 @@ jobs:
             if [ "$AGE" -gt "$TTL" ]; then
               echo "EXPIRE ${SERVICE_NAME} (${AGE}s old, TTL ${TTL}s)"
 
+              # Wait for any in-progress operation before deleting
+              for i in $(seq 1 10); do
+                SVC_STATUS=$(aws apprunner describe-service --service-arn "$ARN" \
+                  --query Service.Status --output text 2>/dev/null || echo "GONE")
+                case "$SVC_STATUS" in
+                  RUNNING|CREATE_FAILED|DELETE_FAILED|GONE) break ;;
+                esac
+                echo "  Waiting for stable state: $SVC_STATUS ($i/10) …"; sleep 15
+              done
+
               aws apprunner delete-service --service-arn "$ARN" || \
                 echo "  WARNING: failed to delete App Runner service $ARN"
 

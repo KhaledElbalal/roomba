@@ -74,6 +74,7 @@ jobs:
           NEON_PROJECT_ID:      ${{ secrets.NEON_PROJECT_ID }}
           NEON_PROD_BRANCH_ID:  ${{ secrets.NEON_PROD_BRANCH_ID }}
           INSTANCE_ROLE_ARN:    ${{ secrets.APPRUNNER_INSTANCE_ROLE_ARN }}
+          SCALING_CONFIG_ARN:   ${{ secrets.SCALING_CONFIG_ARN }}
         run: |
           set -euo pipefail
 
@@ -123,6 +124,7 @@ jobs:
               --service-name         "$SERVICE_NAME" \
               --source-configuration "$SOURCE_CONFIG" \
               --instance-configuration "InstanceRoleArn=${INSTANCE_ROLE_ARN}" \
+              --auto-scaling-configuration-arn "${SCALING_CONFIG_ARN}" \
               --health-check-configuration Protocol=HTTP,Path=/up \
               --tags \
                 Key=roomba-env,Value=preview \
