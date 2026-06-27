@@ -1,0 +1,56 @@
+name: Delete Preview Environment
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Delete preview environment
+        env:
+          PR_NUMBER:       ${{ github.event.pull_request.number }}
+          NEON_API_KEY:    ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          SERVICE_NAME="roomba-api-pr-${PR_NUMBER}"
+
+          SERVICE_ARN=$(aws apprunner list-services \
+            --query "ServiceSummaryList[?ServiceName=='${SERVICE_NAME}'].ServiceArn | [0]" \
+            --output text)
+
+          if [ "$SERVICE_ARN" = "None" ] || [ -z "$SERVICE_ARN" ]; then
+            echo "No preview service found for PR #${PR_NUMBER} — nothing to clean up."
+            exit 0
+          fi
+
+          # Retrieve the Neon branch ID we stored as a tag at creation time
+          NEON_BRANCH_ID=$(aws apprunner list-tags-for-resource \
+            --resource-arn "$SERVICE_ARN" \
+            --query "Tags[?Key=='NeonBranchId'].Value | [0]" \
+            --output text)
+
+          echo "Deleting App Runner service ${SERVICE_NAME} …"
+          aws apprunner delete-service --service-arn "$SERVICE_ARN"
+
+          if [ -n "$NEON_BRANCH_ID" ] && [ "$NEON_BRANCH_ID" != "None" ]; then
+            echo "Deleting Neon branch ${NEON_BRANCH_ID} …"
+            curl -sf -X DELETE \
+              "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}" \
+              -H "Authorization: Bearer ${NEON_API_KEY}"
+          fi
+
+          echo "Preview environment for PR #${PR_NUMBER} removed."

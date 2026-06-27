@@ -1,0 +1,37 @@
+ARG RUBY_VERSION=3.4.9
+FROM docker.io/library/ruby:$RUBY_VERSION-slim AS base
+
+# Agent harness image. At runtime:
+#   1. Clones the target repo into /workspace (no Docker daemon needed — Fargate)
+#   2. Runs the repo's own build/test commands inside this container
+#   3. Opens a PR via GitHub API if tests pass
+#
+
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y \
+      git \
+      curl \
+      ca-certificates \
+      build-essential \
+      libpq-dev \
+      nodejs \
+    && rm -rf /var/lib/apt/lists /var/cache/apt/archives
+
+WORKDIR /agent
+
+ENV BUNDLE_PATH=/usr/local/bundle \
+    BUNDLE_DEPLOYMENT=1 \
+    BUNDLE_WITHOUT="development:test"
+
+COPY Gemfile Gemfile.lock ./
+RUN bundle install
+
+COPY . .
+
+RUN groupadd --system --gid 1000 agent && \
+    useradd agent --uid 1000 --gid 1000 --create-home --shell /bin/bash && \
+    mkdir -p /workspace && chown -R 1000:1000 /agent /workspace
+
+USER 1000:1000
+
+ENTRYPOINT ["bundle", "exec", "rails", "runner", "AgentHarness.run"]

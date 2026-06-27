@@ -1,0 +1,97 @@
+name: Deploy Production
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      api-image: ${{ steps.push.outputs.api }}
+      agent-image: ${{ steps.push.outputs.agent }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push images
+        id: push
+        env:
+          REG: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ github.sha }}
+        run: |
+          docker build -f Dockerfile.api   -t "$REG/roomba-api:$TAG"   .
+          docker push "$REG/roomba-api:$TAG"
+          echo "api=$REG/roomba-api:$TAG" >> "$GITHUB_OUTPUT"
+
+          docker build -f Dockerfile.agent -t "$REG/roomba-agent:$TAG" .
+          docker push "$REG/roomba-agent:$TAG"
+          echo "agent=$REG/roomba-agent:$TAG" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Update App Runner image
+        env:
+          SERVICE_ARN: ${{ secrets.APPRUNNER_API_SERVICE_ARN }}
+          IMAGE: ${{ needs.build.outputs.api-image }}
+          ACCESS_ROLE: ${{ secrets.APPRUNNER_ACCESS_ROLE_ARN }}
+        run: |
+          # Fetch current config so we keep all env vars / secrets intact
+          CURRENT=$(aws apprunner describe-service \
+            --service-arn "$SERVICE_ARN" \
+            --query Service.SourceConfiguration --output json)
+
+          aws apprunner update-service \
+            --service-arn "$SERVICE_ARN" \
+            --source-configuration "$(echo "$CURRENT" | jq \
+              --arg img "$IMAGE" \
+              '.ImageRepository.ImageIdentifier = $img')"
+
+          # Poll until running (up to 10 min)
+          for i in $(seq 1 20); do
+            STATUS=$(aws apprunner describe-service \
+              --service-arn "$SERVICE_ARN" \
+              --query Service.Status --output text)
+            [ "$STATUS" = "RUNNING" ] && echo "Deployed successfully" && break
+            echo "  Status: $STATUS ($i/20) …"
+            sleep 30
+          done
+
+      - name: Register new agent task definition revision
+        env:
+          TASK_FAMILY: ${{ secrets.ECS_AGENT_TASK_FAMILY }}
+          IMAGE: ${{ needs.build.outputs.agent-image }}
+        run: |
+          CURRENT=$(aws ecs describe-task-definition \
+            --task-definition "$TASK_FAMILY" \
+            --query taskDefinition --output json)
+
+          aws ecs register-task-definition --cli-input-json "$(echo "$CURRENT" | jq \
+            --arg img "$IMAGE" \
+            'del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                 .compatibilities, .registeredAt, .registeredBy)
+             | .containerDefinitions[0].image = $img')"
