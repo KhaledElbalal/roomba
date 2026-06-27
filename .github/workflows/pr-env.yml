@@ -63,20 +63,13 @@ jobs:
       - name: Deploy preview environment
         id: deploy
         env:
-          SERVICE_NAME:             ${{ steps.env.outputs.service_name }}
-          NEON_BRANCH:              ${{ steps.env.outputs.neon_branch }}
-          IMAGE:                    ${{ steps.image.outputs.uri }}
-          NEON_API_KEY:             ${{ secrets.NEON_API_KEY }}
-          NEON_PROJECT_ID:          ${{ secrets.NEON_PROJECT_ID }}
-          NEON_PROD_BRANCH_ID:      ${{ secrets.NEON_PROD_BRANCH_ID }}
-          ACCESS_ROLE_ARN:          ${{ secrets.APPRUNNER_ACCESS_ROLE_ARN }}
-          INSTANCE_ROLE_ARN:        ${{ secrets.APPRUNNER_INSTANCE_ROLE_ARN }}
-          ECS_CLUSTER:              ${{ secrets.ECS_CLUSTER }}
-          ECS_AGENT_TASK_FAMILY:    ${{ secrets.ECS_AGENT_TASK_FAMILY }}
-          AGENT_SUBNETS:            ${{ secrets.AGENT_SUBNETS }}
-          AGENT_SECURITY_GROUP:     ${{ secrets.AGENT_SECURITY_GROUP }}
-          RUN_QUEUE_URL:            ${{ secrets.RUN_QUEUE_URL }}
-          APP_KEYS_SECRET_ARN:      ${{ secrets.APP_KEYS_SECRET_ARN }}
+          SERVICE_NAME:         ${{ steps.env.outputs.service_name }}
+          NEON_BRANCH:          ${{ steps.env.outputs.neon_branch }}
+          IMAGE:                ${{ steps.image.outputs.uri }}
+          NEON_API_KEY:         ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID:      ${{ secrets.NEON_PROJECT_ID }}
+          NEON_PROD_BRANCH_ID:  ${{ secrets.NEON_PROD_BRANCH_ID }}
+          INSTANCE_ROLE_ARN:    ${{ secrets.APPRUNNER_INSTANCE_ROLE_ARN }}
         run: |
           set -euo pipefail
 
@@ -89,7 +82,7 @@ jobs:
           [ "$EXISTING_ARN" = "None" ] && EXISTING_ARN=""
 
           if [ -z "$EXISTING_ARN" ]; then
-            # ── First push on this branch: provision Neon branch + new service ──
+            # ── First push: provision Neon branch + clone prod config ──────────
 
             NEON_RESP=$(curl -sf -X POST \
               "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches" \
@@ -103,43 +96,27 @@ jobs:
             DB_URL=$(echo "$NEON_RESP" | jq -r '.connection_uris[0].connection_uri')
             NEON_BRANCH_ID=$(echo "$NEON_RESP" | jq -r '.branch.id')
 
-            SOURCE_CONFIG=$(jq -n \
-              --arg image     "$IMAGE" \
-              --arg role      "$ACCESS_ROLE_ARN" \
-              --arg db        "$DB_URL" \
-              --arg cluster   "$ECS_CLUSTER" \
-              --arg task      "$ECS_AGENT_TASK_FAMILY" \
-              --arg subnets   "$AGENT_SUBNETS" \
-              --arg sg        "$AGENT_SECURITY_GROUP" \
-              --arg queue     "$RUN_QUEUE_URL" \
-              --arg keys_arn  "$APP_KEYS_SECRET_ARN" \
-              '{
-                ImageRepository: {
-                  ImageIdentifier: $image,
-                  ImageRepositoryType: "ECR",
-                  ImageConfiguration: {
-                    Port: "3000",
-                    RuntimeEnvironmentVariables: {
-                      RAILS_ENV:            "production",
-                      DATABASE_URL:         $db,
-                      DATABASE_URL_DIRECT:  $db,
-                      ECS_CLUSTER:          $cluster,
-                      AGENT_TASK_DEFINITION: $task,
-                      AGENT_SUBNETS:        $subnets,
-                      AGENT_SECURITY_GROUP: $sg,
-                      QUEUE_BACKEND:        "sqs",
-                      AGENT_BACKEND:        "fargate",
-                      RUN_QUEUE_URL:        $queue,
-                      APP_KEYS_SECRET_ARN:  $keys_arn
-                    }
-                  }
-                },
-                AuthenticationConfiguration: {AccessRoleArn: $role},
-                AutoDeploymentsEnabled: false
-              }')
+            # Read config from the prod service — it is the single source of truth.
+            # Patch: swap image, replace DB secrets with plain env vars for this branch.
+            PROD_SERVICE_ARN=$(aws apprunner list-services \
+              --query "ServiceSummaryList[?ServiceName=='roomba-api-prod'].ServiceArn | [0]" \
+              --output text)
+            PROD_CONFIG=$(aws apprunner describe-service \
+              --service-arn "$PROD_SERVICE_ARN" \
+              --query Service.SourceConfiguration --output json)
+
+            SOURCE_CONFIG=$(echo "$PROD_CONFIG" | jq \
+              --arg img "$IMAGE" \
+              --arg db  "$DB_URL" \
+              '.ImageRepository.ImageIdentifier = $img
+               | .AutoDeploymentsEnabled = false
+               | del(.ImageRepository.ImageConfiguration.RuntimeEnvironmentSecrets.DATABASE_URL)
+               | del(.ImageRepository.ImageConfiguration.RuntimeEnvironmentSecrets.DATABASE_URL_DIRECT)
+               | .ImageRepository.ImageConfiguration.RuntimeEnvironmentVariables.DATABASE_URL = $db
+               | .ImageRepository.ImageConfiguration.RuntimeEnvironmentVariables.DATABASE_URL_DIRECT = $db')
 
             RESULT=$(aws apprunner create-service \
-              --service-name        "$SERVICE_NAME" \
+              --service-name         "$SERVICE_NAME" \
               --source-configuration "$SOURCE_CONFIG" \
               --instance-configuration "InstanceRoleArn=${INSTANCE_ROLE_ARN}" \
               --health-check-configuration Protocol=HTTP,Path=/up \
