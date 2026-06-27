@@ -67,13 +67,14 @@ jobs:
           AGENT_SUBNETS:     ${{ secrets.AGENT_SUBNETS }}
           AGENT_SG:          ${{ secrets.AGENT_SECURITY_GROUP }}
           RUN_QUEUE_URL:     ${{ secrets.RUN_QUEUE_URL }}
-          NEON_BRIDGE_ARN:   ${{ secrets.NEON_AUTH_BRIDGE_SECRET_ARN }}
-          MASTER_KEY_ARN:    ${{ secrets.RAILS_MASTER_KEY_SECRET_ARN }}
-          NEON_JWKS_URL:     ${{ secrets.NEON_AUTH_JWKS_URL }}
-          NEON_ISSUER:       ${{ secrets.NEON_AUTH_ISSUER }}
-          NEON_AUDIENCE:     ${{ secrets.NEON_AUTH_AUDIENCE }}
-          FRONTEND_ORIGIN:   ${{ secrets.FRONTEND_ORIGIN }}
-          ROUTE53_ZONE_ID:   ${{ secrets.ROUTE53_ZONE_ID }}
+          NEON_BRIDGE_ARN:     ${{ secrets.NEON_AUTH_BRIDGE_SECRET_ARN }}
+          MASTER_KEY_ARN:      ${{ secrets.RAILS_MASTER_KEY_SECRET_ARN }}
+          NEON_JWKS_URL:       ${{ secrets.NEON_AUTH_JWKS_URL }}
+          NEON_ISSUER:         ${{ secrets.NEON_AUTH_ISSUER }}
+          NEON_AUDIENCE:       ${{ secrets.NEON_AUTH_AUDIENCE }}
+          FRONTEND_ORIGIN:     ${{ secrets.FRONTEND_ORIGIN }}
+          ROUTE53_ZONE_ID:     ${{ secrets.ROUTE53_ZONE_ID }}
+          SCALING_CONFIG_ARN:  ${{ secrets.SCALING_CONFIG_ARN }}
         run: |
           set -euo pipefail
 
@@ -163,6 +164,7 @@ jobs:
                   AutoDeploymentsEnabled: false
                 }')" \
               --instance-configuration "InstanceRoleArn=${INSTANCE_ROLE_ARN}" \
+              --auto-scaling-configuration-arn "${SCALING_CONFIG_ARN}" \
               --health-check-configuration Protocol=HTTP,Path=/up)
             SERVICE_ARN=$(echo "$RESULT" | jq -r '.Service.ServiceArn')
             echo "Created: $SERVICE_ARN"
