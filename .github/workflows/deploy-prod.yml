@@ -68,6 +68,7 @@ jobs:
           AGENT_SG:          ${{ secrets.AGENT_SECURITY_GROUP }}
           RUN_QUEUE_URL:     ${{ secrets.RUN_QUEUE_URL }}
           NEON_BRIDGE_ARN:   ${{ secrets.NEON_AUTH_BRIDGE_SECRET_ARN }}
+          MASTER_KEY_ARN:    ${{ secrets.RAILS_MASTER_KEY_SECRET_ARN }}
           NEON_JWKS_URL:     ${{ secrets.NEON_AUTH_JWKS_URL }}
           NEON_ISSUER:       ${{ secrets.NEON_AUTH_ISSUER }}
           NEON_AUDIENCE:     ${{ secrets.NEON_AUTH_AUDIENCE }}
@@ -97,6 +98,7 @@ jobs:
                 --arg db_pooled  "$DB_POOLED_ARN" \
                 --arg db_direct  "$DB_DIRECT_ARN" \
                 --arg bridge_arn "$NEON_BRIDGE_ARN" \
+                --arg master_arn "$MASTER_KEY_ARN" \
                 --arg jwks_url   "$NEON_JWKS_URL" \
                 --arg issuer     "$NEON_ISSUER" \
                 --arg audience   "$NEON_AUDIENCE" \
@@ -126,6 +128,7 @@ jobs:
                       RuntimeEnvironmentSecrets: {
                         DATABASE_URL:            $db_pooled,
                         DATABASE_URL_DIRECT:     $db_direct,
+                        RAILS_MASTER_KEY:        $master_arn,
                         NEON_AUTH_BRIDGE_SECRET: $bridge_arn
                       }
                     }
