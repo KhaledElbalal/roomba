@@ -19,7 +19,7 @@ module Authentication
 
     claims = verify_token!(token)
     @current_user_id = claims["sub"]
-    return render_unauthorized if @current_user_id.blank?
+    render_unauthorized if @current_user_id.blank?
   rescue VerificationError, JWT::DecodeError, JWT::JWKError,
          OpenSSL::PKey::PKeyError, JSON::ParserError, ArgumentError,
          KeyError, SocketError, SystemCallError, Timeout::Error => e
@@ -43,9 +43,9 @@ module Authentication
   def verify_bridge_jwt!(token)
     secret = ENV.fetch("NEON_AUTH_BRIDGE_SECRET")
     payload, _header = JWT.decode(token, secret, true,
-      algorithms: ["HS256"],
+      algorithms: [ "HS256" ],
       leeway: CLOCK_LEEWAY,
-      required_claims: ["sub", "exp"])
+      required_claims: [ "sub", "exp" ])
     payload
   rescue JWT::DecodeError => e
     raise VerificationError, "bridge JWT invalid: #{e.message}"
