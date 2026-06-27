@@ -1,0 +1,76 @@
+name: Expire Preview Environments
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # runs every 15 minutes
+  workflow_dispatch:           # allow manual trigger for testing
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  expire:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Delete expired preview environments
+        env:
+          NEON_API_KEY:    ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          NOW=$(date -u +%s)
+          TTL=3600   # 1 hour in seconds
+
+          # Collect ARNs of all App Runner services that look like preview envs
+          ARNS=$(aws apprunner list-services --output json | jq -r '
+            .ServiceSummaryList[]
+            | select(.ServiceName | (startswith("roomba-api-pr-") or startswith("roomba-api-br-")))
+            | .ServiceArn')
+
+          if [ -z "$ARNS" ]; then
+            echo "No preview environments found."
+            exit 0
+          fi
+
+          for ARN in $ARNS; do
+            TAGS=$(aws apprunner list-tags-for-resource \
+              --resource-arn "$ARN" --output json | jq -r '.Tags')
+
+            LAST_PUSH=$(echo "$TAGS" | jq -r '.[] | select(.Key=="LastPushAt") | .Value')
+            NEON_BRANCH_ID=$(echo "$TAGS" | jq -r '.[] | select(.Key=="NeonBranchId") | .Value')
+            SERVICE_NAME=$(aws apprunner describe-service --service-arn "$ARN" \
+              --query Service.ServiceName --output text)
+
+            if [ -z "$LAST_PUSH" ] || [ "$LAST_PUSH" = "null" ]; then
+              echo "SKIP  ${SERVICE_NAME} — no LastPushAt tag"
+              continue
+            fi
+
+            PUSH_TS=$(date -d "$LAST_PUSH" +%s 2>/dev/null || echo 0)
+            AGE=$((NOW - PUSH_TS))
+
+            if [ "$AGE" -gt "$TTL" ]; then
+              echo "EXPIRE ${SERVICE_NAME} (${AGE}s old, TTL ${TTL}s)"
+
+              aws apprunner delete-service --service-arn "$ARN" || \
+                echo "  WARNING: failed to delete App Runner service $ARN"
+
+              if [ -n "$NEON_BRANCH_ID" ] && [ "$NEON_BRANCH_ID" != "null" ]; then
+                curl -sf -X DELETE \
+                  "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${NEON_BRANCH_ID}" \
+                  -H "Authorization: Bearer ${NEON_API_KEY}" || \
+                  echo "  WARNING: failed to delete Neon branch $NEON_BRANCH_ID"
+              fi
+            else
+              REMAINING=$((TTL - AGE))
+              echo "OK    ${SERVICE_NAME} (${AGE}s old, ${REMAINING}s until expiry)"
+            fi
+          done

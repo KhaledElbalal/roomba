@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 160" width="560" height="160" fill="none">
+  
+  <g transform="translate(8,20)">
+    <path d="M73 24.3 A38 38 0 1 1 47 24.3" stroke="#4C8DFF" stroke-width="10" stroke-linecap="round"></path>
+    <circle cx="60" cy="22" r="8" fill="#9BC2FF"></circle>
+  </g>
+  <text x="150" y="113" font-family="&#39;Space Grotesk&#39;, sans-serif" font-weight="600" font-size="96" letter-spacing="-4" fill="#F3F6FC">roomba</text>
+</svg>

@@ -1,0 +1,175 @@
+name: Deploy Production
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      api-image: ${{ steps.push.outputs.api }}
+      agent-image: ${{ steps.push.outputs.agent }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push images
+        id: push
+        env:
+          REG: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ github.sha }}
+        run: |
+          docker build -f Dockerfile.api   -t "$REG/roomba-api:$TAG"   .
+          docker push "$REG/roomba-api:$TAG"
+          echo "api=$REG/roomba-api:$TAG" >> "$GITHUB_OUTPUT"
+
+          docker build -f Dockerfile.agent -t "$REG/roomba-agent:$TAG" .
+          docker push "$REG/roomba-agent:$TAG"
+          echo "agent=$REG/roomba-agent:$TAG" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy App Runner service
+        env:
+          IMAGE:             ${{ needs.build.outputs.api-image }}
+          ACCESS_ROLE_ARN:   ${{ secrets.APPRUNNER_ACCESS_ROLE_ARN }}
+          INSTANCE_ROLE_ARN: ${{ secrets.APPRUNNER_INSTANCE_ROLE_ARN }}
+          DB_POOLED_ARN:     ${{ secrets.DB_POOLED_SECRET_ARN }}
+          DB_DIRECT_ARN:     ${{ secrets.DB_DIRECT_SECRET_ARN }}
+          APP_KEYS_ARN:      ${{ secrets.APP_KEYS_SECRET_ARN }}
+          ECS_CLUSTER:       ${{ secrets.ECS_CLUSTER }}
+          ECS_TASK_FAMILY:   ${{ secrets.ECS_AGENT_TASK_FAMILY }}
+          AGENT_SUBNETS:     ${{ secrets.AGENT_SUBNETS }}
+          AGENT_SG:          ${{ secrets.AGENT_SECURITY_GROUP }}
+          RUN_QUEUE_URL:     ${{ secrets.RUN_QUEUE_URL }}
+          NEON_BRIDGE_ARN:   ${{ secrets.NEON_AUTH_BRIDGE_SECRET_ARN }}
+          NEON_JWKS_URL:     ${{ secrets.NEON_AUTH_JWKS_URL }}
+          NEON_ISSUER:       ${{ secrets.NEON_AUTH_ISSUER }}
+          NEON_AUDIENCE:     ${{ secrets.NEON_AUTH_AUDIENCE }}
+          FRONTEND_ORIGIN:   ${{ secrets.FRONTEND_ORIGIN }}
+        run: |
+          set -euo pipefail
+
+          # Look up by name — works on first run (no ARN secret needed)
+          SERVICE_ARN=$(aws apprunner list-services \
+            --query "ServiceSummaryList[?ServiceName=='roomba-api-prod'].ServiceArn | [0]" \
+            --output text 2>/dev/null || echo "")
+          [ "$SERVICE_ARN" = "None" ] && SERVICE_ARN=""
+
+          if [ -z "$SERVICE_ARN" ]; then
+            echo "Creating App Runner service for the first time …"
+            RESULT=$(aws apprunner create-service \
+              --service-name "roomba-api-prod" \
+              --source-configuration "$(jq -n \
+                --arg img        "$IMAGE" \
+                --arg role       "$ACCESS_ROLE_ARN" \
+                --arg cluster    "$ECS_CLUSTER" \
+                --arg task       "$ECS_TASK_FAMILY" \
+                --arg subnets    "$AGENT_SUBNETS" \
+                --arg sg         "$AGENT_SG" \
+                --arg queue      "$RUN_QUEUE_URL" \
+                --arg keys_arn   "$APP_KEYS_ARN" \
+                --arg db_pooled  "$DB_POOLED_ARN" \
+                --arg db_direct  "$DB_DIRECT_ARN" \
+                --arg bridge_arn "$NEON_BRIDGE_ARN" \
+                --arg jwks_url   "$NEON_JWKS_URL" \
+                --arg issuer     "$NEON_ISSUER" \
+                --arg audience   "$NEON_AUDIENCE" \
+                --arg fe_origin  "$FRONTEND_ORIGIN" \
+                '{
+                  ImageRepository: {
+                    ImageIdentifier: $img,
+                    ImageRepositoryType: "ECR",
+                    ImageConfiguration: {
+                      Port: "3000",
+                      RuntimeEnvironmentVariables: ({
+                        RAILS_ENV:             "production",
+                        ECS_CLUSTER:           $cluster,
+                        AGENT_TASK_DEFINITION: $task,
+                        AGENT_SUBNETS:         $subnets,
+                        AGENT_SECURITY_GROUP:  $sg,
+                        QUEUE_BACKEND:         "sqs",
+                        AGENT_BACKEND:         "fargate",
+                        RUN_QUEUE_URL:         $queue,
+                        APP_KEYS_SECRET_ARN:   $keys_arn,
+                        NEON_AUTH_JWKS_URL:    $jwks_url
+                      }
+                      # Only include optional vars when set (empty string omitted)
+                      + (if $issuer   != "" then {NEON_AUTH_ISSUER:   $issuer}   else {} end)
+                      + (if $audience != "" then {NEON_AUTH_AUDIENCE: $audience} else {} end)
+                      + (if $fe_origin != "" then {FRONTEND_ORIGIN:   $fe_origin} else {} end)),
+                      RuntimeEnvironmentSecrets: {
+                        DATABASE_URL:            $db_pooled,
+                        DATABASE_URL_DIRECT:     $db_direct,
+                        NEON_AUTH_BRIDGE_SECRET: $bridge_arn
+                      }
+                    }
+                  },
+                  AuthenticationConfiguration: {AccessRoleArn: $role},
+                  AutoDeploymentsEnabled: false
+                }')" \
+              --instance-configuration "InstanceRoleArn=${INSTANCE_ROLE_ARN}" \
+              --health-check-configuration Protocol=HTTP,Path=/up)
+            SERVICE_ARN=$(echo "$RESULT" | jq -r '.Service.ServiceArn')
+            echo "Created: $SERVICE_ARN"
+          else
+            echo "Updating existing service …"
+            CURRENT=$(aws apprunner describe-service \
+              --service-arn "$SERVICE_ARN" \
+              --query Service.SourceConfiguration --output json)
+
+            aws apprunner update-service \
+              --service-arn "$SERVICE_ARN" \
+              --source-configuration "$(echo "$CURRENT" | jq \
+                --arg img "$IMAGE" '.ImageRepository.ImageIdentifier = $img')"
+          fi
+
+          # Poll until running (up to 10 min)
+          for i in $(seq 1 20); do
+            STATUS=$(aws apprunner describe-service \
+              --service-arn "$SERVICE_ARN" \
+              --query Service.Status --output text 2>/dev/null || echo "CREATING")
+            [ "$STATUS" = "RUNNING" ] && echo "Deployed successfully" && break
+            echo "  Status: $STATUS ($i/20) …"
+            sleep 30
+          done
+
+      - name: Register new agent task definition revision
+        env:
+          TASK_FAMILY: ${{ secrets.ECS_AGENT_TASK_FAMILY }}
+          IMAGE: ${{ needs.build.outputs.agent-image }}
+        run: |
+          CURRENT=$(aws ecs describe-task-definition \
+            --task-definition "$TASK_FAMILY" \
+            --query taskDefinition --output json)
+
+          aws ecs register-task-definition --cli-input-json "$(echo "$CURRENT" | jq \
+            --arg img "$IMAGE" \
+            'del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                 .compatibilities, .registeredAt, .registeredBy)
+             | .containerDefinitions[0].image = $img')"

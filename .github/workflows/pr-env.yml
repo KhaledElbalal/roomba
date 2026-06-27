@@ -1,0 +1,178 @@
+name: Preview Environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Derive stable names from the trigger ───────────────────────────────
+      - name: Set environment identifiers
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR="${{ github.event.pull_request.number }}"
+            SLUG="pr-${PR}"
+            echo "pr_number=${PR}" >> "$GITHUB_OUTPUT"
+          else
+            # Normalize branch name for use in AWS resource names (max 40 chars)
+            SLUG="br-$(echo '${{ github.ref_name }}' \
+              | tr '[:upper:]' '[:lower:]' \
+              | sed 's/[^a-z0-9]/-/g' \
+              | cut -c1-37 \
+              | sed 's/-$//')"
+            echo "pr_number=" >> "$GITHUB_OUTPUT"
+          fi
+          echo "slug=${SLUG}"                       >> "$GITHUB_OUTPUT"
+          echo "service_name=roomba-api-${SLUG}"    >> "$GITHUB_OUTPUT"
+          echo "neon_branch=${SLUG}"                >> "$GITHUB_OUTPUT"
+
+      # ── Build & push preview image ─────────────────────────────────────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push preview image
+        id: image
+        env:
+          REG: ${{ steps.ecr.outputs.registry }}
+          TAG: preview-${{ github.sha }}
+        run: |
+          docker build -f Dockerfile.api -t "$REG/roomba-api:$TAG" .
+          docker push "$REG/roomba-api:$TAG"
+          echo "uri=$REG/roomba-api:$TAG" >> "$GITHUB_OUTPUT"
+
+      # ── Create or update the App Runner preview service ────────────────────
+      - name: Deploy preview environment
+        id: deploy
+        env:
+          SERVICE_NAME:         ${{ steps.env.outputs.service_name }}
+          NEON_BRANCH:          ${{ steps.env.outputs.neon_branch }}
+          IMAGE:                ${{ steps.image.outputs.uri }}
+          NEON_API_KEY:         ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID:      ${{ secrets.NEON_PROJECT_ID }}
+          NEON_PROD_BRANCH_ID:  ${{ secrets.NEON_PROD_BRANCH_ID }}
+          INSTANCE_ROLE_ARN:    ${{ secrets.APPRUNNER_INSTANCE_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+
+          TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          # Check whether the preview service already exists
+          EXISTING_ARN=$(aws apprunner list-services \
+            --query "ServiceSummaryList[?ServiceName=='${SERVICE_NAME}'].ServiceArn | [0]" \
+            --output text)
+          [ "$EXISTING_ARN" = "None" ] && EXISTING_ARN=""
+
+          if [ -z "$EXISTING_ARN" ]; then
+            # ── First push: provision Neon branch + clone prod config ──────────
+
+            NEON_RESP=$(curl -sf -X POST \
+              "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches" \
+              -H "Authorization: Bearer ${NEON_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "$(jq -n \
+                --arg name   "$NEON_BRANCH" \
+                --arg parent "$NEON_PROD_BRANCH_ID" \
+                '{branch: {name: $name, parent_id: $parent}, endpoints: [{type: "read_write"}]}')")
+
+            DB_URL=$(echo "$NEON_RESP" | jq -r '.connection_uris[0].connection_uri')
+            NEON_BRANCH_ID=$(echo "$NEON_RESP" | jq -r '.branch.id')
+
+            # Read config from the prod service — it is the single source of truth.
+            # Patch: swap image, replace DB secrets with plain env vars for this branch.
+            PROD_SERVICE_ARN=$(aws apprunner list-services \
+              --query "ServiceSummaryList[?ServiceName=='roomba-api-prod'].ServiceArn | [0]" \
+              --output text)
+            PROD_CONFIG=$(aws apprunner describe-service \
+              --service-arn "$PROD_SERVICE_ARN" \
+              --query Service.SourceConfiguration --output json)
+
+            SOURCE_CONFIG=$(echo "$PROD_CONFIG" | jq \
+              --arg img "$IMAGE" \
+              --arg db  "$DB_URL" \
+              '.ImageRepository.ImageIdentifier = $img
+               | .AutoDeploymentsEnabled = false
+               | del(.ImageRepository.ImageConfiguration.RuntimeEnvironmentSecrets.DATABASE_URL)
+               | del(.ImageRepository.ImageConfiguration.RuntimeEnvironmentSecrets.DATABASE_URL_DIRECT)
+               | .ImageRepository.ImageConfiguration.RuntimeEnvironmentVariables.DATABASE_URL = $db
+               | .ImageRepository.ImageConfiguration.RuntimeEnvironmentVariables.DATABASE_URL_DIRECT = $db')
+
+            RESULT=$(aws apprunner create-service \
+              --service-name         "$SERVICE_NAME" \
+              --source-configuration "$SOURCE_CONFIG" \
+              --instance-configuration "InstanceRoleArn=${INSTANCE_ROLE_ARN}" \
+              --health-check-configuration Protocol=HTTP,Path=/up \
+              --tags \
+                Key=roomba-env,Value=preview \
+                Key=NeonBranchId,Value="$NEON_BRANCH_ID" \
+                Key=LastPushAt,Value="$TIMESTAMP")
+
+            SERVICE_ARN=$(echo "$RESULT" | jq -r '.Service.ServiceArn')
+            SERVICE_URL=$(echo "$RESULT" | jq -r '.Service.ServiceUrl')
+
+          else
+            # ── Subsequent push: update image + refresh TTL tag ────────────────
+
+            SERVICE_ARN="$EXISTING_ARN"
+
+            CURRENT=$(aws apprunner describe-service \
+              --service-arn "$SERVICE_ARN" \
+              --query Service.SourceConfiguration --output json)
+
+            aws apprunner update-service \
+              --service-arn "$SERVICE_ARN" \
+              --source-configuration "$(echo "$CURRENT" | jq \
+                --arg img "$IMAGE" '.ImageRepository.ImageIdentifier = $img')"
+
+            aws apprunner tag-resource \
+              --resource-arn "$SERVICE_ARN" \
+              --tags Key=LastPushAt,Value="$TIMESTAMP"
+
+            SERVICE_URL=$(aws apprunner describe-service \
+              --service-arn "$SERVICE_ARN" \
+              --query Service.ServiceUrl --output text)
+          fi
+
+          echo "url=https://${SERVICE_URL}"  >> "$GITHUB_OUTPUT"
+          echo "arn=${SERVICE_ARN}"          >> "$GITHUB_OUTPUT"
+
+      # ── Publish the URL ────────────────────────────────────────────────────
+      - name: Write job summary (for manual / workflow_dispatch runs)
+        run: |
+          echo "## Preview environment" >> "$GITHUB_STEP_SUMMARY"
+          echo ""                        >> "$GITHUB_STEP_SUMMARY"
+          echo "**URL:** ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo ""                        >> "$GITHUB_STEP_SUMMARY"
+          echo "Expires 1 hour after this push." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on PR
+        if: steps.env.outputs.pr_number != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url  = '${{ steps.deploy.outputs.url }}';
+            const sha  = context.sha.slice(0, 7);
+            await github.rest.issues.createComment({
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              issue_number: ${{ steps.env.outputs.pr_number }},
+              body: `## Preview environment\n\n🚀 **[${url}](${url})**\n\nDeployed \`${sha}\` · Expires 1 hour after last push`,
+            });

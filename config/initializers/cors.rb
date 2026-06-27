@@ -1,0 +1,11 @@
+# Allow the Next.js frontend to call the API with the Authorization bearer header.
+Rails.application.config.middleware.insert_before 0, Rack::Cors do
+  allow do
+    origins ENV.fetch("FRONTEND_ORIGIN", "http://localhost:3001")
+
+    resource "*",
+      headers: :any,
+      expose: [ "Authorization" ],
+      methods: %i[get post patch put delete options]
+  end
+end
