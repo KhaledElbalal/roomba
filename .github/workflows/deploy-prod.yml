@@ -82,6 +82,23 @@ jobs:
             --output text 2>/dev/null || echo "")
           [ "$SERVICE_ARN" = "None" ] && SERVICE_ARN=""
 
+          # A service stuck in CREATE_FAILED/DELETE_FAILED can't be updated —
+          # delete it and recreate from scratch.
+          if [ -n "$SERVICE_ARN" ]; then
+            CUR_STATUS=$(aws apprunner describe-service --service-arn "$SERVICE_ARN" \
+              --query Service.Status --output text 2>/dev/null || echo "")
+            if [ "$CUR_STATUS" = "CREATE_FAILED" ] || [ "$CUR_STATUS" = "DELETE_FAILED" ]; then
+              echo "Service is $CUR_STATUS — deleting before recreating …"
+              aws apprunner delete-service --service-arn "$SERVICE_ARN" >/dev/null
+              for i in $(seq 1 30); do
+                aws apprunner describe-service --service-arn "$SERVICE_ARN" \
+                  --query Service.Status --output text >/dev/null 2>&1 || break
+                echo "  waiting for deletion ($i/30) …"; sleep 10
+              done
+              SERVICE_ARN=""
+            fi
+          fi
+
           if [ -z "$SERVICE_ARN" ]; then
             echo "Creating App Runner service for the first time …"
             RESULT=$(aws apprunner create-service \
