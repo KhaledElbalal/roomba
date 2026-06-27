@@ -73,8 +73,12 @@ jobs:
           NEON_ISSUER:       ${{ secrets.NEON_AUTH_ISSUER }}
           NEON_AUDIENCE:     ${{ secrets.NEON_AUTH_AUDIENCE }}
           FRONTEND_ORIGIN:   ${{ secrets.FRONTEND_ORIGIN }}
+          ROUTE53_ZONE_ID:   ${{ secrets.ROUTE53_ZONE_ID }}
         run: |
           set -euo pipefail
+
+          CUSTOM_DOMAIN="roomba-api.khaledibrahim.tech"
+          IS_NEW_SERVICE=false
 
           # Look up by name — works on first run (no ARN secret needed)
           SERVICE_ARN=$(aws apprunner list-services \
@@ -91,8 +95,12 @@ jobs:
               echo "Service is $CUR_STATUS — deleting before recreating …"
               aws apprunner delete-service --service-arn "$SERVICE_ARN" >/dev/null
               for i in $(seq 1 30); do
-                aws apprunner describe-service --service-arn "$SERVICE_ARN" \
-                  --query Service.Status --output text >/dev/null 2>&1 || break
+                # describe-service keeps returning the service with Status=DELETED
+                # after deletion finishes, so break on the status — not on the call
+                # failing (which only happens much later).
+                DEL_STATUS=$(aws apprunner describe-service --service-arn "$SERVICE_ARN" \
+                  --query Service.Status --output text 2>/dev/null || echo "GONE")
+                case "$DEL_STATUS" in DELETED|GONE) break ;; esac
                 echo "  waiting for deletion ($i/30) …"; sleep 10
               done
               SERVICE_ARN=""
@@ -100,6 +108,7 @@ jobs:
           fi
 
           if [ -z "$SERVICE_ARN" ]; then
+            IS_NEW_SERVICE=true
             echo "Creating App Runner service for the first time …"
             RESULT=$(aws apprunner create-service \
               --service-name "roomba-api-prod" \
@@ -178,6 +187,52 @@ jobs:
             echo "  Status: $STATUS ($i/20) …"
             sleep 30
           done
+
+          # On recreation: re-associate the custom domain and update Route 53.
+          # On normal update the existing association and DNS records remain valid.
+          if [ "$IS_NEW_SERVICE" = "true" ] && [ -n "${ROUTE53_ZONE_ID:-}" ]; then
+            echo "Re-associating custom domain $CUSTOM_DOMAIN …"
+            ASSOC=$(aws apprunner associate-custom-domain \
+              --service-arn "$SERVICE_ARN" \
+              --domain-name "$CUSTOM_DOMAIN" \
+              --no-enable-www-subdomain)
+            DNS_TARGET=$(echo "$ASSOC" | jq -r '.DNSTarget')
+
+            # Update routing CNAME to the new service URL
+            aws route53 change-resource-record-sets \
+              --hosted-zone-id "$ROUTE53_ZONE_ID" \
+              --change-batch "$(jq -n \
+                --arg name "${CUSTOM_DOMAIN}." \
+                --arg value "$DNS_TARGET" \
+                '{Changes: [{Action: "UPSERT", ResourceRecordSet: {
+                  Name: $name, Type: "CNAME", TTL: 300,
+                  ResourceRecords: [{Value: $value}]
+                }}]}')"
+            echo "Routing CNAME updated: $CUSTOM_DOMAIN → $DNS_TARGET"
+
+            # Poll for cert validation records (App Runner provisions them async)
+            for i in $(seq 1 12); do
+              CERT_COUNT=$(aws apprunner describe-custom-domains \
+                --service-arn "$SERVICE_ARN" \
+                --query "length(CustomDomains[?DomainName=='$CUSTOM_DOMAIN'].CertificateValidationRecords[])" \
+                --output text 2>/dev/null || echo "0")
+              if [ "${CERT_COUNT:-0}" -gt "0" ]; then
+                CHANGES=$(aws apprunner describe-custom-domains \
+                  --service-arn "$SERVICE_ARN" \
+                  --query "CustomDomains[?DomainName=='$CUSTOM_DOMAIN'].CertificateValidationRecords[]" \
+                  --output json | jq '[.[] | {
+                    Action: "UPSERT",
+                    ResourceRecordSet: {Name: .Name, Type: "CNAME", TTL: 300, ResourceRecords: [{Value: .Value}]}
+                  }] | {Changes: .}')
+                aws route53 change-resource-record-sets \
+                  --hosted-zone-id "$ROUTE53_ZONE_ID" \
+                  --change-batch "$CHANGES"
+                echo "Cert validation records updated in Route 53"
+                break
+              fi
+              echo "  Waiting for cert validation records ($i/12) …"; sleep 10
+            done
+          fi
 
       - name: Register new agent task definition revision
         env:
