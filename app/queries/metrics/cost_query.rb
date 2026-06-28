@@ -56,7 +56,9 @@ module Metrics
               .group(Arel.sql("payload->>'model'"))
               .pluck(
                 Arel.sql("payload->>'model'"),
-                Arel.sql("COALESCE(SUM((payload->>'prompt_tokens')::int + (payload->>'completion_tokens')::int), 0)")
+                # The harness emits input_tokens/output_tokens (ArtifactRecorder),
+                # not prompt_/completion_tokens — keep these keys in sync with it.
+                Arel.sql("COALESCE(SUM((payload->>'input_tokens')::int + (payload->>'output_tokens')::int), 0)")
               )
               .map { |key, tokens| { key: key, spend_usd: nil, tokens: tokens.to_i } }
     end
