@@ -3,16 +3,13 @@ class CreateAgentRuns < ActiveRecord::Migration[8.1]
     create_table :agent_runs do |t|
       t.column :user_id, :uuid, null: false
 
-      # Linear linkage
       t.string :linear_id
       t.references :linear_task, null: true, foreign_key: { on_delete: :nullify }
 
-      # GitHub
       t.string :github_repo
       t.string :github_pr_url
       t.string :dockerfile_path
 
-      # Identity
       t.string :name
       t.text :description
       t.string :status, null: false, default: "queued"
@@ -23,15 +20,12 @@ class CreateAgentRuns < ActiveRecord::Migration[8.1]
       t.references :llm_provider, null: false, foreign_key: true
       t.bigint :llm_provider_fallback_id
 
-      # Secrets
       t.string :env_secret_ref
 
-      # Bounds
       t.integer :max_wall_clock_seconds
       t.integer :max_iterations
       t.decimal :max_cost_usd, precision: 10, scale: 4
 
-      # Telemetry spine
       t.datetime :started_at
       t.datetime :finished_at
       t.datetime :pr_opened_at
@@ -39,7 +33,6 @@ class CreateAgentRuns < ActiveRecord::Migration[8.1]
       t.decimal :cost_usd, precision: 10, scale: 4
       t.bigint :tokens_used
 
-      # Evaluation
       t.integer :user_rating
       t.text :user_feedback
       t.boolean :changes_requested
