@@ -28,7 +28,6 @@ module Metrics
       (scope.succeeded.count.to_f / total).round(4)
     end
 
-    # Median time a run sat in the queue before the agent picked it up.
     def queue_wait_median
       waits = scope.where.not(started_at: nil)
                    .pluck(:created_at, :started_at)
