@@ -12,7 +12,7 @@ class DockerRunner
   private
 
   def env_flags(run)
-    build_env(run).flat_map { |k, v| ["-e", "#{k}=#{v}"] }
+    build_env(run).flat_map { |k, v| [ "-e", "#{k}=#{v}" ] }
   end
 
   def agent_image

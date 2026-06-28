@@ -32,7 +32,7 @@ RSpec.describe DockerRunner do
       captured = nil
       allow(Open3).to receive(:capture3) do |*args|
         captured = args
-        ["abc123def456\n", "", instance_double(Process::Status, success?: true)]
+        [ "abc123def456\n", "", instance_double(Process::Status, success?: true) ]
       end
 
       result = runner.launch(run)
@@ -51,7 +51,7 @@ RSpec.describe DockerRunner do
 
     it "raises when docker run exits non-zero" do
       allow(Open3).to receive(:capture3).and_return(
-        ["", "no such image: roomba-agent:test", instance_double(Process::Status, success?: false)]
+        [ "", "no such image: roomba-agent:test", instance_double(Process::Status, success?: false) ]
       )
 
       expect { runner.launch(run) }.to raise_error(RuntimeError, /docker run failed/)

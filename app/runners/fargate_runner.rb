@@ -14,10 +14,10 @@ class FargateRunner
         }
       },
       overrides: {
-        container_overrides: [{
+        container_overrides: [ {
           name:        "agent",
           environment: build_env(run).map { |k, v| { name: k, value: v } }
-        }]
+        } ]
       }
     )
     response.tasks.first.task_arn

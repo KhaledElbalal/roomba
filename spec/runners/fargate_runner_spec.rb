@@ -38,7 +38,7 @@ RSpec.describe FargateRunner do
   describe "#launch" do
     it "calls run_task with FARGATE launch type, awsvpc network config, and run context overrides" do
       task     = double("task", task_arn: task_arn)
-      response = double("run_task_response", tasks: [task])
+      response = double("run_task_response", tasks: [ task ])
 
       expect(ecs_client).to receive(:run_task).with(
         cluster:               "roomba-cluster",
@@ -46,8 +46,8 @@ RSpec.describe FargateRunner do
         launch_type:           "FARGATE",
         network_configuration: {
           awsvpc_configuration: {
-            subnets:          ["subnet-aaa", "subnet-bbb"],
-            security_groups:  ["sg-123"],
+            subnets:          [ "subnet-aaa", "subnet-bbb" ],
+            security_groups:  [ "sg-123" ],
             assign_public_ip: "ENABLED"
           }
         },
@@ -74,7 +74,7 @@ RSpec.describe FargateRunner do
 
     it "builds the ECS client with the configured region" do
       task     = double("task", task_arn: task_arn)
-      response = double("run_task_response", tasks: [task])
+      response = double("run_task_response", tasks: [ task ])
       allow(ecs_client).to receive(:run_task).and_return(response)
 
       ENV["AWS_REGION"] = "eu-west-1"
