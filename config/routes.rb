@@ -7,6 +7,13 @@ Rails.application.routes.draw do
 
   namespace :api do
     get "me", to: "me#show"
+
+    namespace :metrics do
+      get :dora
+      get :usage
+      get :cost
+      get :timeseries
+    end
   end
 
   # Render dynamic PWA files from app/views/pwa/* (remember to link manifest in application.html.erb)
