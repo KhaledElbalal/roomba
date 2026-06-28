@@ -58,7 +58,7 @@ RSpec.describe "API llm_providers endpoints", type: :request do
 
       post "/api/llm_providers", params: valid_params, headers: auth_headers(user_id)
 
-      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response).to have_http_status(:unprocessable_content)
       expect(LlmProvider.for_user(user_id)).to be_empty
     end
 
@@ -66,7 +66,7 @@ RSpec.describe "API llm_providers endpoints", type: :request do
       post "/api/llm_providers",
         params: valid_params.except(:provider_name), headers: auth_headers(user_id)
 
-      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response).to have_http_status(:unprocessable_content)
     end
 
     it "returns 400 when the api_key is missing" do

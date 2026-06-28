@@ -71,7 +71,7 @@ RSpec.describe "API integrations endpoints", type: :request do
       post "/api/integrations",
         params: { provider: "github", token: "ghp_bad" }, headers: auth_headers(user_id)
 
-      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response).to have_http_status(:unprocessable_content)
       expect(JSON.parse(response.body)).to eq("error" => "GitHub rejected the token (HTTP 401)")
       expect(Integration.for_user(user_id)).to be_empty
     end
@@ -80,7 +80,7 @@ RSpec.describe "API integrations endpoints", type: :request do
       post "/api/integrations",
         params: { provider: "gitlab", token: "x" }, headers: auth_headers(user_id)
 
-      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response).to have_http_status(:unprocessable_content)
     end
 
     it "returns 400 when a param is missing" do
