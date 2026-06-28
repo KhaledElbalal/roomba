@@ -5,7 +5,10 @@ FactoryBot.define do
     status      { :queued }
     association :llm_provider
 
-    trait :running   do status { :running }  end
+    trait :running do
+      status     { :running }
+      started_at { Time.current }
+    end
     trait :succeeded do
       status      { :succeeded }
       started_at  { 5.minutes.ago }
