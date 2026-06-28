@@ -1,0 +1,4 @@
+.env
+.env.local
+config/master.key
+config/credentials/development.key

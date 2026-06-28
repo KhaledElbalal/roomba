@@ -79,9 +79,9 @@ RSpec.describe Metrics::CostQuery do
       run = create(:run, :succeeded, user_id: user_id, llm_provider: provider,
                    cost_usd: 2.0, tokens_used: 15_000)
       create(:artifact, run: run, artifact_type: :llm_call,
-             payload: { model: "gpt-4o", prompt_tokens: 100, completion_tokens: 50 })
+             payload: { model: "gpt-4o", input_tokens: 100, output_tokens: 50 })
       create(:artifact, run: run, artifact_type: :llm_call,
-             payload: { model: "gpt-4o-mini", prompt_tokens: 40, completion_tokens: 20 })
+             payload: { model: "gpt-4o-mini", input_tokens: 40, output_tokens: 20 })
     end
 
     it "groups artifacts by model and sums tokens" do
