@@ -37,7 +37,6 @@ class AgentHarness
     end
 
     def run_command(command)
-      # The model supplies a single command string; run it under a shell.
       @runner.run([ "bash", "-lc", command ], chdir: @dir)
     end
 

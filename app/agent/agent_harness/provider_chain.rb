@@ -4,7 +4,6 @@ class AgentHarness
   # `llm_call` artifact records `fallback: true` (AC: fallback is flagged). With
   # no fallback configured, the primary error propagates and ends the run.
   class ProviderChain
-    # A single model call paired with the metadata the recorder needs.
     Call = Struct.new(
       :completion, :provider_name, :model, :cost_usd, :fallback,
       keyword_init: true
