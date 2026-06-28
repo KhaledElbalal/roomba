@@ -41,7 +41,7 @@ RSpec.describe SqsRunQueue do
       )
     end
     let(:sqs_response_with_message) do
-      instance_double(Aws::SQS::Types::ReceiveMessageResult, messages: [sqs_message])
+      instance_double(Aws::SQS::Types::ReceiveMessageResult, messages: [ sqs_message ])
     end
 
     before do

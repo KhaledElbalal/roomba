@@ -34,7 +34,7 @@ RSpec.describe DbRunQueue do
       first  = queue.send(:claim_next)
       second = queue.send(:claim_next)
 
-      expect([first.id, second.id]).to contain_exactly(run_a.id, run_b.id)
+      expect([ first.id, second.id ]).to contain_exactly(run_a.id, run_b.id)
       expect(first.id).not_to eq(second.id)
     end
 
