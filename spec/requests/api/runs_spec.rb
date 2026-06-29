@@ -106,7 +106,7 @@ RSpec.describe "API runs endpoints", type: :request do
 
       body = JSON.parse(response.body)
       expect(body["page"]).to eq(2)
-      expect(body["data"].size).to eq(5)   # 30 total, 25 per page → page 2 has 5
+      expect(body["data"].size).to eq(5)
       expect(body["total"]).to eq(30)
     end
   end
@@ -185,6 +185,186 @@ RSpec.describe "API runs endpoints", type: :request do
 
       artifact = JSON.parse(response.body)["artifacts"].first
       expect(artifact.keys).to contain_exactly("id", "artifact_type", "sequence", "payload", "created_at")
+    end
+  end
+
+  describe "POST /api/runs" do
+    let(:issue) do
+      { id: "lin-uuid-1", code: "ROO-5", title: "Add auth",
+        description: "wire up Neon Auth", type: "feature" }
+    end
+    let(:payload) do
+      { github_repo: "acme/api", dockerfile_path: "Dockerfile.agent",
+        llm_provider_id: provider.id, linear_issue: issue }
+    end
+
+    # Capture whether the run row was already committed at the moment enqueue
+    # ran, so we can prove row-before-enqueue rather than just that both happened.
+    let(:queue) { instance_double(DbRunQueue) }
+    let(:persisted_at_enqueue) { [] }
+
+    before do
+      allow(RunQueue).to receive(:build).and_return(queue)
+      allow(queue).to receive(:enqueue) { |run| persisted_at_enqueue << Run.exists?(run.id) }
+    end
+
+    def post_run(body = payload, as_user: user_id)
+      post "/api/runs", params: body, headers: auth_headers(as_user), as: :json
+    end
+
+    it "returns 401 without a token" do
+      post "/api/runs", params: payload, as: :json
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it "creates a queued run and returns 202 with id + status" do
+      expect { post_run }.to change(Run, :count).by(1)
+
+      expect(response).to have_http_status(:accepted)
+      body = JSON.parse(response.body)
+      expect(body).to eq("id" => Run.last.id, "status" => "queued")
+    end
+
+    it "enqueues the run only after the row is committed" do
+      post_run
+
+      expect(queue).to have_received(:enqueue).with(Run.last)
+      expect(persisted_at_enqueue).to eq([ true ])
+    end
+
+    # The inverse of row-before-enqueue: if the transaction rolls back, no
+    # message may go out — otherwise the queue would reference a row that never
+    # committed (a phantom message).
+    it "does not enqueue when the run fails to persist inside the transaction" do
+      allow(Run).to receive(:create!).and_raise(ActiveRecord::RecordInvalid.new(Run.new))
+
+      expect { post_run }.not_to change(Run, :count)
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(queue).not_to have_received(:enqueue)
+    end
+
+    it "caches the Linear issue into linear_tasks and links it" do
+      expect { post_run }.to change(LinearTask, :count).by(1)
+
+      task = LinearTask.find_by(code: "ROO-5")
+      expect(task).to have_attributes(name: "Add auth", description: "wire up Neon Auth", task_type: "feature")
+      expect(task.synced_at).to be_present
+      expect(Run.last.linear_task_id).to eq(task.id)
+      expect(Run.last.linear_id).to eq("lin-uuid-1")
+    end
+
+    it "derives bugfix task_type from the issue type" do
+      post_run(payload.merge(linear_issue: issue.merge(type: "bugfix")))
+      expect(LinearTask.find_by(code: "ROO-5").task_type).to eq("bugfix")
+    end
+
+    it "refreshes an existing cached task rather than duplicating it" do
+      create(:linear_task, code: "ROO-5", name: "stale name")
+
+      expect { post_run }.not_to change(LinearTask, :count)
+      expect(LinearTask.find_by(code: "ROO-5").name).to eq("Add auth")
+    end
+
+    it "defaults bounds sensibly when omitted" do
+      post_run
+
+      run = Run.last
+      expect(run.max_iterations).to eq(20)
+      expect(run.max_wall_clock_seconds).to eq(1800)
+      expect(run.max_cost_usd).to eq(5.0)
+    end
+
+    it "respects bounds when provided" do
+      post_run(payload.merge(max_iterations: 3, max_wall_clock_seconds: 120, max_cost_usd: 1.25))
+
+      run = Run.last
+      expect(run.max_iterations).to eq(3)
+      expect(run.max_wall_clock_seconds).to eq(120)
+      expect(run.max_cost_usd).to eq(1.25)
+    end
+
+    it "persists the optional fallback provider and env ref" do
+      fallback = create(:llm_provider, user_id: user_id)
+      post_run(payload.merge(llm_provider_fallback_id: fallback.id, env_secret_ref: "arn:aws:env"))
+
+      run = Run.last
+      expect(run.llm_provider_fallback_id).to eq(fallback.id)
+      expect(run.env_secret_ref).to eq("arn:aws:env")
+    end
+
+    context "idempotency (FR-4)" do
+      it "rejects a second trigger while a run for the task is active" do
+        task = create(:linear_task, code: "ROO-5")
+        existing = create(:run, :running, user_id: user_id, llm_provider: provider, linear_task: task)
+
+        expect { post_run }.not_to change(Run, :count)
+
+        expect(response).to have_http_status(:conflict)
+        body = JSON.parse(response.body)
+        expect(body["run"]).to eq("id" => existing.id, "status" => "running")
+        expect(queue).not_to have_received(:enqueue)
+      end
+
+      it "allows a new run once the prior one is in a terminal state" do
+        task = create(:linear_task, code: "ROO-5")
+        create(:run, :succeeded, user_id: user_id, llm_provider: provider, linear_task: task)
+
+        expect { post_run }.to change(Run, :count).by(1)
+        expect(response).to have_http_status(:accepted)
+      end
+
+      it "is user-scoped: another user's active run does not block this user" do
+        task = create(:linear_task, code: "ROO-5")
+        other = create(:llm_provider, user_id: other_user_id)
+        create(:run, :running, user_id: other_user_id, llm_provider: other, linear_task: task)
+
+        expect { post_run }.to change(Run, :count).by(1)
+        expect(response).to have_http_status(:accepted)
+      end
+    end
+
+    context "provider ownership" do
+      it "rejects a provider belonging to another user" do
+        other = create(:llm_provider, user_id: other_user_id)
+
+        expect { post_run(payload.merge(llm_provider_id: other.id)) }.not_to change(Run, :count)
+        expect(response).to have_http_status(:unprocessable_content)
+      end
+
+      it "rejects a non-existent provider" do
+        post_run(payload.merge(llm_provider_id: 0))
+        expect(response).to have_http_status(:unprocessable_content)
+      end
+
+      it "rejects a fallback provider belonging to another user" do
+        other = create(:llm_provider, user_id: other_user_id)
+
+        post_run(payload.merge(llm_provider_fallback_id: other.id))
+        expect(response).to have_http_status(:unprocessable_content)
+      end
+    end
+
+    context "missing required params" do
+      it "requires github_repo" do
+        post_run(payload.except(:github_repo))
+        expect(response).to have_http_status(:bad_request)
+      end
+
+      it "requires llm_provider_id" do
+        post_run(payload.except(:llm_provider_id))
+        expect(response).to have_http_status(:bad_request)
+      end
+
+      it "requires the linear_issue" do
+        post_run(payload.except(:linear_issue))
+        expect(response).to have_http_status(:bad_request)
+      end
+
+      it "requires the issue code and title" do
+        post_run(payload.merge(linear_issue: { title: "no code" }))
+        expect(response).to have_http_status(:bad_request)
+      end
     end
   end
 end
