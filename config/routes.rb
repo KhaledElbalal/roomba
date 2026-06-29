@@ -4,6 +4,10 @@ Rails.application.routes.draw do
   namespace :api do
     get "me", to: "me#show"
 
+    resources :runs, only: [ :index, :show ] do
+      resources :artifacts, only: [ :index ]
+    end
+
     # PAT integrations are addressed by provider, not id (unique per user).
     resources :integrations, only: [ :index, :create, :destroy ], param: :provider
 
