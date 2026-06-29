@@ -20,9 +20,11 @@ jobs:
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
+        timeout-minutes: 5  # backstop: STS assume normally takes seconds
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+          retry-max-attempts: 3  # default is 12 → can hang ~15min past OIDC token TTL
 
       - name: Login to ECR
         id: ecr
@@ -50,9 +52,11 @@ jobs:
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
+        timeout-minutes: 5  # backstop: STS assume normally takes seconds
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+          retry-max-attempts: 3  # default is 12 → can hang ~15min past OIDC token TTL
 
       - name: Deploy App Runner service
         env:
