@@ -4,7 +4,7 @@ Rails.application.routes.draw do
   namespace :api do
     get "me", to: "me#show"
 
-    resources :runs, only: [ :index, :show ] do
+    resources :runs, only: [ :index, :show, :create ] do
       resources :artifacts, only: [ :index ]
     end
 
