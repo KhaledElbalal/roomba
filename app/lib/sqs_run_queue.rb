@@ -3,7 +3,7 @@ class SqsRunQueue
 
   def initialize
     @client    = Aws::SQS::Client.new
-    @queue_url = ENV.fetch("SQS_QUEUE_URL")
+    @queue_url = ENV.fetch("RUN_QUEUE_URL")
   end
 
   def enqueue(run)

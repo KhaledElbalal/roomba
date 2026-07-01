@@ -5,11 +5,11 @@ RSpec.describe SqsRunQueue do
   let(:queue_url)  { "https://sqs.us-east-1.amazonaws.com/123/roomba-test" }
 
   around do |example|
-    saved = ENV["SQS_QUEUE_URL"]
-    ENV["SQS_QUEUE_URL"] = queue_url
+    saved = ENV["RUN_QUEUE_URL"]
+    ENV["RUN_QUEUE_URL"] = queue_url
     example.run
   ensure
-    saved.nil? ? ENV.delete("SQS_QUEUE_URL") : ENV["SQS_QUEUE_URL"] = saved
+    saved.nil? ? ENV.delete("RUN_QUEUE_URL") : ENV["RUN_QUEUE_URL"] = saved
   end
 
   before { allow(Aws::SQS::Client).to receive(:new).and_return(sqs_client) }

@@ -39,7 +39,7 @@ RSpec.describe DockerRunner do
 
       expect(result).to eq("abc123def456")
       expect(captured).to include("docker", "run", "--rm", "-d")
-      expect(captured).to include("-e", "RUN_ID=42")
+      expect(captured).to include("-e", "AGENT_RUN_ID=42")
       expect(captured).to include("-e", "LINEAR_ID=ROO-7")
       expect(captured).to include("-e", "GITHUB_REPO=acme/api")
       expect(captured).to include("-e", "DOCKERFILE_PATH=Dockerfile.agent")

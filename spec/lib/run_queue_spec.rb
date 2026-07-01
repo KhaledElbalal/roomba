@@ -3,7 +3,7 @@ require "rails_helper"
 RSpec.describe RunQueue do
   describe ".build" do
     around do |example|
-      saved = { "QUEUE_BACKEND" => ENV["QUEUE_BACKEND"], "SQS_QUEUE_URL" => ENV["SQS_QUEUE_URL"] }
+      saved = { "QUEUE_BACKEND" => ENV["QUEUE_BACKEND"], "RUN_QUEUE_URL" => ENV["RUN_QUEUE_URL"] }
       example.run
     ensure
       saved.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
@@ -20,7 +20,7 @@ RSpec.describe RunQueue do
     context "when QUEUE_BACKEND=sqs" do
       before do
         ENV["QUEUE_BACKEND"] = "sqs"
-        ENV["SQS_QUEUE_URL"] = "https://sqs.us-east-1.amazonaws.com/123/test"
+        ENV["RUN_QUEUE_URL"] = "https://sqs.us-east-1.amazonaws.com/123/test"
         allow(Aws::SQS::Client).to receive(:new).and_return(instance_double(Aws::SQS::Client))
       end
 

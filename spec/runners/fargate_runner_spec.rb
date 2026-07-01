@@ -20,12 +20,12 @@ RSpec.describe FargateRunner do
   let(:task_arn)   { "arn:aws:ecs:us-east-1:123456789012:task/cluster/abc123" }
 
   around do |ex|
-    saved = %w[DATABASE_URL ECS_CLUSTER ECS_TASK_DEFINITION ECS_SUBNETS ECS_SECURITY_GROUPS].index_with { |k| ENV[k] }
-    ENV["DATABASE_URL"]        = "postgres://localhost/roomba_test"
-    ENV["ECS_CLUSTER"]         = "roomba-cluster"
-    ENV["ECS_TASK_DEFINITION"] = "roomba-agent:1"
-    ENV["ECS_SUBNETS"]         = "subnet-aaa,subnet-bbb"
-    ENV["ECS_SECURITY_GROUPS"] = "sg-123"
+    saved = %w[DATABASE_URL ECS_CLUSTER AGENT_TASK_DEFINITION AGENT_SUBNETS AGENT_SECURITY_GROUP].index_with { |k| ENV[k] }
+    ENV["DATABASE_URL"]          = "postgres://localhost/roomba_test"
+    ENV["ECS_CLUSTER"]           = "roomba-cluster"
+    ENV["AGENT_TASK_DEFINITION"] = "roomba-agent:1"
+    ENV["AGENT_SUBNETS"]         = "subnet-aaa,subnet-bbb"
+    ENV["AGENT_SECURITY_GROUP"]  = "sg-123"
     ex.run
   ensure
     saved.each { |k, v| v ? ENV[k] = v : ENV.delete(k) }
@@ -56,7 +56,7 @@ RSpec.describe FargateRunner do
             hash_including(
               name:        "agent",
               environment: include(
-                { name: "RUN_ID",                 value: "99" },
+                { name: "AGENT_RUN_ID",           value: "99" },
                 { name: "LINEAR_ID",              value: "ROO-9" },
                 { name: "GITHUB_REPO",            value: "acme/api" },
                 { name: "DOCKERFILE_PATH",        value: "Dockerfile.agent" },

@@ -3,7 +3,7 @@ module RunContext
 
   def build_env(run)
     {
-      "RUN_ID"                 => run.id.to_s,
+      "AGENT_RUN_ID"           => run.id.to_s,
       "LINEAR_ID"              => run.linear_id.to_s,
       "GITHUB_REPO"            => run.github_repo.to_s,
       "DOCKERFILE_PATH"        => run.dockerfile_path.to_s,

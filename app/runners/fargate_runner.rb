@@ -4,12 +4,12 @@ class FargateRunner
   def launch(run)
     response = ecs_client.run_task(
       cluster:               ENV.fetch("ECS_CLUSTER"),
-      task_definition:       ENV.fetch("ECS_TASK_DEFINITION"),
+      task_definition:       ENV.fetch("AGENT_TASK_DEFINITION"),
       launch_type:           "FARGATE",
       network_configuration: {
         awsvpc_configuration: {
-          subnets:          ENV.fetch("ECS_SUBNETS").split(","),
-          security_groups:  ENV.fetch("ECS_SECURITY_GROUPS").split(","),
+          subnets:          ENV.fetch("AGENT_SUBNETS").split(","),
+          security_groups:  ENV.fetch("AGENT_SECURITY_GROUP").split(","),
           assign_public_ip: "ENABLED"
         }
       },
