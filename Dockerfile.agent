@@ -22,7 +22,8 @@ WORKDIR /agent
 ENV BUNDLE_PATH=/usr/local/bundle \
     BUNDLE_DEPLOYMENT=1 \
     BUNDLE_WITHOUT="development:test" \
-    RAILS_ENV="production"
+    RAILS_ENV="production" \
+    SECRET_KEY_BASE_DUMMY="1"
 
 COPY Gemfile Gemfile.lock ./
 RUN bundle install
