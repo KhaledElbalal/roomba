@@ -167,7 +167,7 @@ jobs:
                   AuthenticationConfiguration: {AccessRoleArn: $role},
                   AutoDeploymentsEnabled: false
                 }')" \
-              --instance-configuration "InstanceRoleArn=${INSTANCE_ROLE_ARN}" \
+              --instance-configuration "Cpu=512,Memory=1024,InstanceRoleArn=${INSTANCE_ROLE_ARN}" \
               --auto-scaling-configuration-arn "${SCALING_CONFIG_ARN}" \
               --health-check-configuration Protocol=HTTP,Path=/up)
             SERVICE_ARN=$(echo "$RESULT" | jq -r '.Service.ServiceArn')
@@ -254,3 +254,34 @@ jobs:
             'del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
                  .compatibilities, .registeredAt, .registeredBy)
              | .containerDefinitions[0].image = $img')"
+
+      # Roll the roomba-worker-prod service (SQS run-queue consumer) onto the new
+      # API image. Requires the deploy role's ecs:UpdateService / DescribeServices
+      # + PassRole on the worker roles — added in roomba-infra iam.tf, so apply
+      # that (and scripts/import-worker.sh) BEFORE merging this step, or the step
+      # will fail with AccessDenied.
+      - name: Deploy worker service
+        env:
+          IMAGE: ${{ needs.build.outputs.api-image }}
+          CLUSTER: ${{ secrets.ECS_CLUSTER }}
+        run: |
+          set -euo pipefail
+
+          CURRENT=$(aws ecs describe-task-definition \
+            --task-definition roomba-worker-prod \
+            --query taskDefinition --output json)
+
+          NEW_TD=$(aws ecs register-task-definition --cli-input-json "$(echo "$CURRENT" | jq \
+            --arg img "$IMAGE" \
+            'del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                 .compatibilities, .registeredAt, .registeredBy)
+             | .containerDefinitions[0].image = $img')" \
+            --query taskDefinition.taskDefinitionArn --output text)
+          echo "Registered $NEW_TD"
+
+          # Point the service at the new revision. force-new-deployment is a no-op
+          # while the worker is scaled to 0 (cost pause) — it just updates config;
+          # up.sh brings it back on the latest revision.
+          aws ecs update-service --cluster "$CLUSTER" --service roomba-worker-prod \
+            --task-definition "$NEW_TD" --force-new-deployment >/dev/null
+          echo "Worker service rolled to $NEW_TD"
