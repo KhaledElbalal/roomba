@@ -14,7 +14,7 @@ gem "solid_queue"
 # AWS SDK — for SQS queue backend and ECS agent dispatch
 gem "aws-sdk-sqs",              "~> 1.0"
 gem "aws-sdk-ecs",              "~> 1.0"
-gem "aws-sdk-secretsmanager",   "~> 1.0"
+gem "aws-sdk-secretsmanager",   "~> 1.134"
 
 # Reduces boot times through caching; required in config/boot.rb
 gem "bootsnap", require: false
