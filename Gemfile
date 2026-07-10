@@ -12,7 +12,7 @@ gem "rack-cors"
 gem "solid_queue"
 
 # AWS SDK — for SQS queue backend and ECS agent dispatch
-gem "aws-sdk-sqs",              "~> 1.0"
+gem "aws-sdk-sqs",              "~> 1.117"
 gem "aws-sdk-ecs",              "~> 1.0"
 gem "aws-sdk-secretsmanager",   "~> 1.0"
 
