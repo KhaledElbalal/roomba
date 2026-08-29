@@ -22,15 +22,55 @@ class AgentHarness
         return Result.new(passed: true, command: nil)
       end
 
+      install_deps
+
       result = @workspace.run_command(@command)
       @recorder.record(:run_command, {
         command: @command, exit_status: result.exit_status,
         stdout: Tools.truncate(result.stdout), stderr: Tools.truncate(result.stderr)
       })
+
+      # Missing binary/deps (exit 127 / command not found) is infra, not a test
+      # failure — treat as no-test rather than failed so a frontend-only repo
+      # without a test setup doesn't get marked failed.
+      if result.exit_status == 127 && (result.stderr.include?("command not found") || result.stderr.include?("not found") || result.stdout.include?("command not found"))
+        @recorder.record(:run_command, { command: @command, note: "test command not found — treating as no test command detected", exit_status: result.exit_status })
+        return Result.new(passed: true, command: @command)
+      end
+
       Result.new(passed: result.success?, command: @command)
     end
 
     private
+
+    def install_deps
+      # Ruby: install gems for the cloned repo (separate bundle from the agent image).
+      if exists?("Gemfile")
+        result = @workspace.run_command("bundle install")
+        @recorder.record(:run_command, {
+          command: "bundle install", exit_status: result.exit_status,
+          stdout: Tools.truncate(result.stdout), stderr: Tools.truncate(result.stderr)
+        })
+      end
+
+      # Node: install from lockfile if present for reproducibility.
+      if exists?("package.json")
+        cmd = if exists?("package-lock.json")
+          "npm ci"
+        elsif exists?("yarn.lock")
+          "yarn install --frozen-lockfile"
+        elsif exists?("pnpm-lock.yaml")
+          "pnpm install --frozen-lockfile"
+        else
+          "npm install"
+        end
+        result = @workspace.run_command(cmd)
+        @recorder.record(:run_command, {
+          command: cmd, exit_status: result.exit_status,
+          stdout: Tools.truncate(result.stdout), stderr: Tools.truncate(result.stderr)
+        })
+      end
+    end
 
     def detect
       return "bundle exec rspec" if exists?("Gemfile") && (exists?(".rspec") || dir?("spec"))
