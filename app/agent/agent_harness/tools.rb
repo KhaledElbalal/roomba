@@ -45,7 +45,7 @@ class AgentHarness
         type: "function",
         function: {
           name: "finish",
-          description: "Call when the task is complete and ready for tests.",
+          description: "REQUIRED final step — call exactly once when ALL edits are complete to signal the task is done. Provide a concise summary of what you changed. The harness will then run tests and, on success, create branch roomba/run-{id}, commit, push, and open the pull request automatically. Do NOT run git commit/push or gh pr create yourself, and do NOT reply with prose alone — a prose reply without this tool does NOT complete the task.",
           parameters: {
             type: "object",
             properties: { summary: { type: "string" } },

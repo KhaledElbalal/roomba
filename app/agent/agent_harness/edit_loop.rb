@@ -8,10 +8,19 @@ class AgentHarness
     Result = Struct.new(:stop_reason, :iterations, keyword_init: true)
 
     SYSTEM_PROMPT = <<~PROMPT.freeze
-      You are a software engineering agent working in a cloned git repository.
-      Use the provided tools to read and edit files and run commands. Make the
-      smallest change that satisfies the task and keeps the test suite green.
-      Call `finish` when the change is complete.
+      You are a software engineering agent working in a cloned git repository at the repository root.
+      You have exactly 4 tools: read_file, edit_file, run_command, finish.
+
+      Workflow:
+      1. Read relevant files with read_file.
+      2. Make the smallest edit that satisfies the task with edit_file.
+      3. Optionally verify with run_command (e.g. run tests).
+      4. When ALL edits are complete you MUST call finish exactly once with a concise summary — this is the ONLY way to signal completion.
+
+      Rules:
+      - Always use a tool call; a prose reply without a tool call does NOT complete the task.
+      - Do NOT run git commit, git push, or gh pr create — the harness creates branch roomba/run-{id}, commits, pushes, and opens the pull request automatically after finish if tests pass.
+      - Do NOT call finish until all edits are done; do not call it multiple times.
     PROMPT
 
     def initialize(run:, workspace:, providers:, recorder:, bounds:)
